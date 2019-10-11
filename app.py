@@ -24,16 +24,19 @@ chrome_driver = object()
 async def event(sid, params):
     global mysql_prefs
 
-    output = object()
+    output = None
 
     if params["method"] != "core":
         statement = "output = {method}.{name}("
-        if params["data"]:
-            statement += "{data}"
-        statement = (statement + ")").format(params)
+        try:
+            if params["data"]:
+                statement += '"""{data}"""'
+        except:
+            pass
+        statement = (statement + ")").format(**params)
         exec(statement)
     else:
-        output = core_logic(params)
+        output = await core_logic(params)
 
     return output if output else "ok"
 
