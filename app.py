@@ -1,11 +1,9 @@
 import sys
 import socketio
 
+from sys import modules
 from sanic import Sanic
-from inspect import isclass
-from sanic_cors import CORS
 from selenium import webdriver
-from sanic.response import text
 from os import getenv, listdir, path, getcwd
 
 # from response import Response
@@ -15,39 +13,55 @@ from os import getenv, listdir, path, getcwd
 sio = socketio.AsyncServer(async_mode="sanic", cors_allowed_origins=[])
 app = Sanic()
 app.config["CORS_SUPPORTS_CREDENTIALS"] = True
-CORS(app)
 sio.attach(app)
 
 chrome_driver = object()
 
 @sio.event
 async def event(sid, params):
-    global mysql_prefs
-
     output = None
-
     if params["method"] != "core":
-        statement = "output = {method}.{name}("
+        interface = Interface(sid, params["method"])
+        module_method = getattr(modules[params["method"]], params["name"])
+
         try:
-            if params["data"]:
-                statement += '"""{data}"""'
-        except:
-            pass
-        statement = (statement + ")").format(**params)
-        exec(statement)
+            output = await module_method(interface)
+        except TypeError:
+            output = await module_method(interface, params["data"])
     else:
         output = await core_logic(params)
 
-    return output if output else "ok"
+    return output
 
 
 def core_logic(params):
+    pname = params["name"]
     pdata = params["data"]
 
-    if params["name"] == "uploadFile":
-        uploadForm = chrome_driver.find_element_by_css_selector("[obli-id=" + pdata["obli-id"] + "]")
-        uploadForm.send_keys(pdata["path"])
+    if pname == "uploadFile":
+        filepath = pdata["path"]
+
+        tf = tempfile.NamedTemporaryFile()
+        if filepath.startswith("http") or filepath.startswith("ftp"):
+            filedata = urllib.request.urlopen(filepath)
+            tf.write(filedata.read())
+            filepath = tf.name
+
+            uploadForm = chrome_driver.find_element_by_css_selector("[obli-id=" + pdata["obli-id"] + "]")
+            uploadForm.send_keys(filepath)
     return
+
+class Interface():
+    def __init__(self, sid, name):
+        self.sid  = sid
+        self.name = name
+
+    async def send(self, event, data):
+        await sio.emit("event", {
+            "event": event,
+            "data":  data,
+            "me": self.name
+        }, room=self.sid)
 
 @sio.event
 async def connect(sid, _):
@@ -63,7 +77,7 @@ if __name__ == "__main__":
     for module in listdir(modules_dir):
         if path.isdir(path.join(modules_dir, module)):
             print("Loading module", module)
-            exec("import " + module)
+            __import__(module)
 
     driver_opts   = webdriver.chrome.options.Options()
 
